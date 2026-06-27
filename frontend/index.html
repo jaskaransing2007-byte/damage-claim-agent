@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClaimVision — AI Damage Claim Verifier</title>
+  <style>
+    /* ── Tokens ──────────────────────────────────────────────── */
+    :root {
+      /* Light Mode Variables */
+      --ink:       #0e1117;
+      --ink-soft:  #4a5066;
+      --ink-muted: #8a91a8;
+      --surface:   #f5f6fa;
+      --card:      #ffffff;
+      --border:    #e2e5f0;
+      --accent:    #2563eb;
+      --accent-lt: #dbeafe;
+      --success:   #16a34a;
+      --success-lt:#dcfce7;
+      --warn:      #d97706;
+      --warn-lt:   #fef3c7;
+      --danger:    #dc2626;
+      --danger-lt: #fee2e2;
+      --shadow:    0 1px 3px rgba(14,17,23,.08), 0 4px 16px rgba(14,17,23,.06);
+      --radius:    12px;
+      --font:      'Inter', system-ui, sans-serif;
+    }
+
+    /* ── Dark Theme Overrides ────────────────────────────────── */
+    .dark-theme {
+      --ink:       #f5f6fa;      /* Off-white readable text */
+      --ink-soft:  #a6adbb;      /* Medium gray secondary text */
+      --ink-muted: #62697a;      /* Muted tracking labels */
+      --surface:   #0d1117;      /* GitHub-style deep dark background */
+      --card:      #161b22;      /* Elevated dark gray surface containers */
+      --border:    #30363d;      /* Subtle dark borders */
+      --accent:    #38bdf8;      /* Sharp electric neon blue highlight */
+      --accent-lt: rgba(56, 189, 248, 0.1);
+      --success:   #4ade80;      /* Vibrant terminal green for supported claims */
+      --success-lt:rgba(74, 222, 128, 0.1);
+      --warn:      #fbbf24;      /* Cyber amber for info gaps */
+      --warn-lt:   rgba(251, 191, 36, 0.1);
+      --danger:    #f87171;      /* Bright alert red for fraud flags */
+      --danger-lt: rgba(248, 113, 113, 0.1);
+      --shadow:    0 4px 20px rgba(0, 0, 0, 0.35);
+    }
+
+    /* ── Reset ───────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--surface);
+      color: var(--ink);
+      min-height: 100vh;
+      line-height: 1.6;
+      transition: background 0.3s ease, color 0.3s ease;
+    }
+
+    /* ── Layout ──────────────────────────────────────────────── */
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      transition: background 0.3s ease, border-color 0.3s ease;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1.2rem;
+      color: var(--ink);
+      text-decoration: none;
+    }
+    .logo-icon {
+      width: 36px; height: 36px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-size: 1.1rem;
+    }
+    .nav-badge {
+      background: var(--accent-lt);
+      color: var(--accent);
+      font-size: .75rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 4rem;
+      display: grid;
+      grid-template-columns: 1fr 420px;
+      gap: 2rem;
+      align-items: start;
+    }
+    @media (max-width: 860px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    /* ── Cards ───────────────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 1.75rem;
+      transition: background 0.3s ease, border-color 0.3s ease;
+    }
+    .card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-title span.icon {
+      font-size: 1.1rem;
+    }
+
+    /* ── Form ────────────────────────────────────────────────── */
+    .form-group { margin-bottom: 1.2rem; }
+    label {
+      display: block;
+      font-size: .82rem;
+      font-weight: 600;
+      color: var(--ink-soft);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 6px;
+    }
+    input[type="text"], select, textarea {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-family: var(--font);
+      font-size: .95rem;
+      color: var(--ink);
+      background: var(--card);
+      transition: border-color .18s, box-shadow .18s, background .3s, color .3s;
+      outline: none;
+    }
+    input[type="text"]:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-lt);
+    }
+    textarea { resize: vertical; min-height: 90px; }
+    select { cursor: pointer; }
+
+    /* ── Upload Zone ─────────────────────────────────────────── */
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 2rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-lt);
+    }
+    .upload-zone input[type="file"] {
+      position: absolute; inset: 0;
+      opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .upload-icon { font-size: 2.5rem; margin-bottom: .5rem; }
+    .upload-label { font-size: .9rem; color: var(--ink-soft); }
+    .upload-label strong { color: var(--accent); }
+
+    /* ── Image Previews ──────────────────────────────────────── */
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+      gap: 8px;
+      margin-top: 1rem;
+    }
+    .preview-item {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1.5px solid var(--border);
+    }
+    .preview-item img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+    }
+    .preview-item .remove-btn {
+      position: absolute; top: 4px; right: 4px;
+      width: 20px; height: 20px;
+      background: rgba(220,38,38,.85);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      font-size: .7rem;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      line-height: 1;
+    }
+
+    /* ── Buttons ─────────────────────────────────────────────── */
+    .btn-primary {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%;
+      padding: 13px 20px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-family: var(--font);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 1.5rem;
+      transition: background .18s, transform .1s;
+    }
+    .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+    .btn-primary:active:not(:disabled) { transform: scale(.99); }
+    .btn-primary:disabled { opacity: .6; cursor: not-allowed; }
+    
+    .btn-secondary {
+      padding: 8px 16px;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-family: var(--font);
+      font-size: .88rem;
+      font-weight: 600;
+      color: var(--ink-soft);
+      cursor: pointer;
+      transition: background .18s, border-color .18s, color .18s;
+    }
+    .btn-secondary:hover { background: var(--border); }
+
+    /* Theme Button Specific Styles */
+    .btn-theme {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: .82rem;
+      padding: 6px 12px;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      color: var(--ink-soft);
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-theme:hover {
+      background: var(--accent-lt);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
+    /* ── Spinner ─────────────────────────────────────────────── */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2.5px solid rgba(255,255,255,.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Result Panel ────────────────────────────────────────── */
+    .result-panel {
+      display: none;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    .result-panel.visible { display: flex; }
+
+    /* Status badge */
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-weight: 700;
+      font-size: .88rem;
+    }
+    .status-badge.supported   { background: var(--success-lt); color: var(--success); }
+    .status-badge.contradicted{ background: var(--danger-lt); color: var(--danger); }
+    .status-badge.not_enough  { background: var(--warn-lt); color: var(--warn); }
+
+    /* Result grid */
+    .result-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .result-grid.dark-theme-items .result-item {
+      background: var(--surface);
+    }
+    .result-item {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 10px 14px;
+      transition: background 0.3s ease;
+    }
+    .result-item .ri-label {
+      font-size: .72rem;
+      font-weight: 700;
+      color: var(--ink-muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 3px;
+    }
+    .result-item .ri-val {
+      font-size: .9rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .result-item.full { grid-column: 1 / -1; }
+
+    /* Severity pill */
+    .sev-none  { color: var(--ink-muted); }
+    .sev-low   { color: #65a30d; }
+    .sev-medium{ color: var(--warn); }
+    .sev-high  { color: var(--danger); }
+    .sev-unknown{ color: var(--ink-muted); }
+
+    /* Flags */
+    .flags-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    .flag-chip {
+      background: var(--warn-lt);
+      color: var(--warn);
+      border-radius: 4px;
+      font-size: .75rem;
+      font-weight: 600;
+      padding: 2px 8px;
+    }
+    .flag-chip.risk { background: var(--danger-lt); color: var(--danger); }
+    .flag-chip.ok { background: var(--success-lt); color: var(--success); }
+
+    /* ── Batch Panel ─────────────────────────────────────────── */
+    .batch-section { margin-top: 2rem; }
+    .progress-bar-wrap {
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+      transition: width .4s ease;
+      width: 0%;
+    }
+
+    /* ── Empty state ─────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--ink-muted);
+    }
+    .empty-state .es-icon { font-size: 3rem; margin-bottom: .75rem; }
+    .empty-state p { font-size: .9rem; }
+
+    /* ── Toast ───────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 2rem; right: 2rem;
+      background: var(--ink);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: .88rem;
+      font-weight: 500;
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all .3s;
+      z-index: 100;
+      max-width: 320px;
+    }
+    #toast.show { transform: translateY(0); opacity: 1; }
+
+    /* ── History sidebar ─────────────────────────────────────── */
+    .history-item {
+      border-left: 3px solid var(--border);
+      padding: 8px 0 8px 14px;
+      margin-bottom: 10px;
+      font-size: .85rem;
+      transition: border-color 0.3s ease;
+    }
+    .history-item .hi-top { display: flex; justify-content: space-between; margin-bottom: 2px; }
+    .history-item .hi-user { font-weight: 600; color: var(--ink); }
+    .history-item .hi-time { font-size: .75rem; color: var(--ink-muted); }
+    .history-item .hi-sub  { color: var(--ink-soft); }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="#" class="logo">
+    <div class="logo-icon">🔍</div>
+    ClaimVision
+  </a>
+  <div class="header-actions">
+    <button id="themeToggleBtn" class="btn-theme">🌙 Dark Mode</button>
+    <span class="nav-badge">AI-Powered Verification</span>
+  </div>
+</header>
+
+<main>
+  <div>
+    <div class="card">
+      <div class="card-title"><span class="icon">📋</span> Submit a Damage Claim</div>
+
+      <div class="form-group">
+        <label>User ID</label>
+        <input type="text" id="userId" placeholder="e.g. U101" />
+      </div>
+
+      <div class="form-group">
+        <label>Object Type</label>
+        <select id="claimObject">
+          <option value="">— Select one —</option>
+          <option value="car">🚗 Car</option>
+          <option value="laptop">💻 Laptop</option>
+          <option value="package">📦 Package</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Describe the Damage</label>
+        <textarea id="userClaim" placeholder="Describe what happened and what damage occurred…"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label>Upload Evidence Images</label>
+        <div class="upload-zone" id="uploadZone">
+          <input type="file" id="fileInput" accept="image/*" multiple />
+          <div class="upload-icon">🖼️</div>
+          <div class="upload-label"><strong>Click to upload</strong> or drag & drop<br><span>PNG, JPG, WEBP · Up to 10 images</span></div>
+        </div>
+        <div class="preview-grid" id="previewGrid"></div>
+      </div>
+
+      <button class="btn-primary" id="analyzeBtn" onclick="analyzeClaim()">
+        <span id="btnText">Analyze Claim</span>
+        <span id="btnSpinner" style="display:none" class="spinner"></span>
+      </button>
+    </div>
+
+    <div class="card batch-section">
+      <div class="card-title"><span class="icon">⚙️</span> Batch CSV Processing</div>
+      <p style="font-size:.88rem;color:var(--ink-soft);margin-bottom:1rem;">
+        Process all rows in <code>dataset/claims.csv</code> and generate <code>output.csv</code>. 
+        Make sure images exist on the server at the specified paths.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn-secondary" onclick="startBatch()">▶ Start Batch</button>
+        <button class="btn-secondary" onclick="pollBatchStatus()">↻ Check Status</button>
+        <button class="btn-secondary" onclick="downloadOutput()">⬇ Download output.csv</button>
+      </div>
+      <div id="batchStatus" style="margin-top:1rem;font-size:.85rem;color:var(--ink-soft);display:none">
+        <div id="batchMsg"></div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" id="resultCard">
+      <div class="card-title"><span class="icon">🧠</span> AI Verdict</div>
+
+      <div class="empty-state" id="emptyState">
+        <div class="es-icon">🔎</div>
+        <p>Submit a claim with images to see the AI analysis here.</p>
+      </div>
+
+      <div class="result-panel" id="resultPanel">
+        </div>
+    </div>
+
+    <div class="card" style="margin-top:1.5rem">
+      <div class="card-title" style="justify-content:space-between">
+        <span><span class="icon">🕑</span> Recent Claims</span>
+        <button class="btn-secondary" style="font-size:.75rem;padding:4px 10px" onclick="clearHistory()">Clear</button>
+      </div>
+      <div id="historyList">
+        <div class="empty-state" style="padding:1.5rem">
+          <p>No claims yet in this session.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const API_BASE = "http://localhost:8000";
+let selectedFiles = [];
+let claimHistory = [];
+let batchPoller = null;
+
+// ── Theme Switcher Engine Layout ─────────────────────────────
+const themeToggleBtn = document.getElementById("themeToggleBtn");
+
+// Check user cache for previous theme settings matching preferences
+if (localStorage.getItem("theme") === "dark") {
+  document.body.classList.add("dark-theme");
+  themeToggleBtn.innerHTML = "☀️ Light Mode";
+}
+
+themeToggleBtn.addEventListener("click", () => {
+  document.body.classList.toggle("dark-theme");
+  
+  if (document.body.classList.contains("dark-theme")) {
+    themeToggleBtn.innerHTML = "☀️ Light Mode";
+    localStorage.setItem("theme", "dark");
+  } else {
+    themeToggleBtn.innerHTML = "🌙 Dark Mode";
+    localStorage.setItem("theme", "light");
+  }
+});
+
+// ── File Upload ──────────────────────────────────────────────
+const uploadZone = document.getElementById("uploadZone");
+const fileInput  = document.getElementById("fileInput");
+const previewGrid = document.getElementById("previewGrid");
+
+uploadZone.addEventListener("dragover", e => { e.preventDefault(); uploadZone.classList.add("drag-over"); });
+uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("drag-over"));
+uploadZone.addEventListener("drop", e => {
+  e.preventDefault();
+  uploadZone.classList.remove("drag-over");
+  addFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener("change", () => addFiles(fileInput.files));
+
+function addFiles(files) {
+  for (const f of files) {
+    if (selectedFiles.length >= 10) break;
+    selectedFiles.push(f);
+  }
+  renderPreviews();
+}
+
+function renderPreviews() {
+  previewGrid.innerHTML = "";
+  selectedFiles.forEach((f, i) => {
+    const url = URL.createObjectURL(f);
+    const item = document.createElement("div");
+    item.className = "preview-item";
+    item.innerHTML = `<img src="${url}" alt="img_${i+1}" /><button class="remove-btn" onclick="removeFile(${i})">✕</button>`;
+    previewGrid.appendChild(item);
+  });
+}
+
+function removeFile(i) {
+  selectedFiles.splice(i, 1);
+  renderPreviews();
+}
+
+// ── Claim Analysis ───────────────────────────────────────────
+async function analyzeClaim() {
+  const userId = document.getElementById("userId").value.trim();
+  const claimObject = document.getElementById("claimObject").value;
+  const userClaim = document.getElementById("userClaim").value.trim();
+
+  if (!userId) return showToast("Please enter a User ID");
+  if (!claimObject) return showToast("Please select an object type");
+  if (!userClaim) return showToast("Please describe the damage");
+  if (selectedFiles.length === 0) return showToast("Please upload at least one image");
+
+  setLoading(true);
+
+  const formData = new FormData();
+  formData.append("user_id", userId);
+  formData.append("claim_object", claimObject);
+  formData.append("user_claim", userClaim);
+  selectedFiles.forEach(f => formData.append("images", f));
+
+  try {
+    const res = await fetch(`${API_BASE}/api/analyze-claim`, {
+      method: "POST",
+      body: formData
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Analysis failed");
+    }
+    const data = await res.json();
+    renderResult(data);
+    addToHistory(data);
+    showToast("Analysis complete ✓");
+  } catch (e) {
+    showToast("Error: " + e.message, true);
+  } finally {
+    setLoading(false);
+  }
+}
+
+function setLoading(on) {
+  document.getElementById("analyzeBtn").disabled = on;
+  document.getElementById("btnText").textContent = on ? "Analyzing…" : "Analyze Claim";
+  document.getElementById("btnSpinner").style.display = on ? "inline-block" : "none";
+}
+
+// ── Render Result ────────────────────────────────────────────
+function renderResult(d) {
+  document.getElementById("emptyState").style.display = "none";
+  const panel = document.getElementById("resultPanel");
+  panel.classList.add("visible");
+
+  const statusClass = d.claim_status === "supported" ? "supported"
+    : d.claim_status === "contradicted" ? "contradicted" : "not_enough";
+  const statusLabel = d.claim_status === "not_enough_information" ? "Not Enough Info" : capitalize(d.claim_status);
+  const statusEmoji = d.claim_status === "supported" ? "✅" : d.claim_status === "contradicted" ? "❌" : "⚠️";
+
+  const flags = d.risk_flags === "none" || !d.risk_flags ? [] : d.risk_flags.split(";");
+  const flagsHtml = flags.length === 0
+    ? `<span class="flag-chip ok">none</span>`
+    : flags.map(f => `<span class="flag-chip ${f.includes("risk") || f.includes("manipulation") ? "risk" : ""}">${f.replace(/_/g," ")}</span>`).join("");
+
+  const sevClass = `sev-${d.severity || "unknown"}`;
+
+  panel.innerHTML = `
+    <div>
+      <div class="status-badge ${statusClass}">${statusEmoji} ${statusLabel}</div>
+      <p style="margin-top:.75rem;font-size:.9rem;color:var(--ink-soft);">${d.claim_status_justification || "No justification provided."}</p>
+    </div>
+    <div class="result-grid">
+      <div class="result-item">
+        <div class="ri-label">Issue Type</div>
+        <div class="ri-val">${d.issue_type || "unknown"}</div>
+      </div>
+      <div class="result-item">
+        <div class="ri-label">Object Part</div>
+        <div class="ri-val">${d.object_part || "unknown"}</div>
+      </div>
+      <div class="result-item">
+        <div class="ri-label">Severity</div>
+        <div class="ri-val ${sevClass}">${capitalize(d.severity || "unknown")}</div>
+      </div>
+      <div class="result-item">
+        <div class="ri-label">Evidence Standard</div>
+        <div class="ri-val">${d.evidence_standard_met ? "✅ Met" : "❌ Not Met"}</div>
+      </div>
+      <div class="result-item full">
+        <div class="ri-label">Evidence Reason</div>
+        <div class="ri-val" style="font-weight:400;font-size:.88rem;">${d.evidence_standard_met_reason || "—"}</div>
+      </div>
+      <div class="result-item full">
+        <div class="ri-label">Supporting Images</div>
+        <div class="ri-val">${d.supporting_image_ids || "none"}</div>
+      </div>
+      <div class="result-item full">
+        <div class="ri-label">Risk Flags</div>
+        <div class="flags-list">${flagsHtml}</div>
+      </div>
+      <div class="result-item">
+        <div class="ri-label">Valid Images</div>
+        <div class="ri-val">${d.valid_image ? "✅ Yes" : "❌ No"}</div>
+      </div>
+    </div>
+  `;
+}
+
+// ── History ──────────────────────────────────────────────────
+function addToHistory(d) {
+  claimHistory.unshift({ ...d, ts: new Date().toLocaleTimeString() });
+  renderHistory();
+}
+function renderHistory() {
+  const list = document.getElementById("historyList");
+  if (claimHistory.length === 0) {
+    list.innerHTML = '<div class="empty-state" style="padding:1.5rem"><p>No claims yet in this session.</p></div>';
+    return;
+  }
+  list.innerHTML = claimHistory.slice(0, 10).map(h => `
+    <div class="history-item">
+      <div class="hi-top">
+        <span class="hi-user">${h.user_id} · ${h.claim_object}</span>
+        <span class="hi-time">${h.ts}</span>
+      </div>
+      <div class="hi-sub">${h.claim_status === "supported" ? "✅" : h.claim_status === "contradicted" ? "❌" : "⚠️"} ${h.issue_type} — ${h.severity}</div>
+    </div>
+  `).join("");
+}
+function clearHistory() { claimHistory = []; renderHistory(); }
+
+// ── Batch Processing ─────────────────────────────────────────
+async function startBatch() {
+  try {
+    const res = await fetch(`${API_BASE}/api/process-csv`, { method: "POST" });
+    const data = await res.json();
+    showToast(data.message);
+    document.getElementById("batchStatus").style.display = "block";
+    startPolling();
+  } catch (e) {
+    showToast("Batch start failed: " + e.message, true);
+  }
+}
+
+function startPolling() {
+  if (batchPoller) clearInterval(batchPoller);
+  batchPoller = setInterval(pollBatchStatus, 3000);
+}
+
+async function pollBatchStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/api/batch-status`);
+    const data = await res.json();
+    const msg = document.getElementById("batchMsg");
+    const fill = document.getElementById("progressFill");
+    const pct = data.total > 0 ? Math.round(data.processed / data.total * 100) : 0;
+    msg.textContent = `Status: ${data.status} · ${data.processed}/${data.total} processed`;
+    fill.style.width = pct + "%";
+    document.getElementById("batchStatus").style.display = "block";
+    if (data.status === "complete" || data.status === "error") {
+      if (batchPoller) clearInterval(batchPoller);
+      showToast(data.status === "complete" ? "Batch complete! Download output.csv ✓" : "Batch error. Check logs.");
+    }
+  } catch (e) {
+    showToast("Status check failed", true);
+  }
+}
+
+function downloadOutput() {
+  window.open(`${API_BASE}/api/download-output`, "_blank");
+}
+
+// ── Toast ────────────────────────────────────────────────────
+function showToast(msg, isErr = false) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.background = isErr ? "#dc2626" : "#0e1117";
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 3500);
+}
+
+// ── Utils ────────────────────────────────────────────────────
+function capitalize(s) {
+  if (!s) return "";
+  return s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ");
+}
+</script>
+</body>
+</html>

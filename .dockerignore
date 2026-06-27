@@ -1,0 +1,12 @@
+__pycache__/
+.pytest_cache/
+*.db
+*.csv
+.env
+results/
+logs/
+saved_validation_model/
+.git/
+.gitignore
+code.zip
+log.txt
