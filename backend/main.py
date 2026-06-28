@@ -4,22 +4,22 @@ import PIL.Image
 import json
 import base64
 import asyncio
-import csv
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-import google.generativeai as genai
+
 import pandas as pd
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base
+
+# Modern Unified Google GenAI SDK Import
+from google import genai
+from google.genai import types
 
 BACKEND_DIR = Path(__file__).resolve().parent
 ENV_PATH = BACKEND_DIR / ".env"
@@ -35,19 +35,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-api_key = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=api_key)
+# Initialize the Modern Google GenAI Client
+# (It automatically sources GEMINI_API_KEY from your Render Environment variables)
+ai_client = genai.Client()
 
 BASE_DIR = BACKEND_DIR.parent
 DATASET_DIR = BASE_DIR / "dataset"
 OUTPUT_FILE = BASE_DIR / "output.csv"
-MODEL_PATH = BACKEND_DIR / "saved_validation_model"
 
-try:
-    gate_tokenizer = AutoTokenizer.from_pretrained(str(MODEL_PATH))
-    gate_model = AutoModelForSequenceClassification.from_pretrained(str(MODEL_PATH))
-except Exception:
-    gate_tokenizer, gate_model = None, None
+# Lightweight fallback structure for the cloud tier since torch/transformers are omitted
+gate_tokenizer, gate_model = None, None
 
 DATABASE_URL = f"sqlite:///{BACKEND_DIR}/claims.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -76,22 +73,8 @@ class VerifiedClaim(Base):
 Base.metadata.create_all(bind=engine)
 
 def run_local_text_validation(text_claim: str) -> str:
-    if not gate_model or not gate_tokenizer:
-        return "Custom validation model unavailable"
-    try:
-        inputs = gate_tokenizer(text_claim, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        with torch.no_grad():
-            outputs = gate_model(**inputs)
-        probabilities = torch.softmax(outputs.logits, dim=1)
-        supported_score = probabilities[0][1].item()
-        if supported_score > 0.70:
-            return f"High probability of a valid claim layout ({supported_score*100:.1f}% confidence)"
-        elif supported_score < 0.35:
-            return f"High risk pattern detected by internal text gate ({ (1 - supported_score)*100:.1f}% risk score)"
-        else:
-            return f"Ambiguous text pattern structure ({supported_score*100:.1f}% validity confidence)"
-    except Exception as e:
-        return f"Error executing local validation gate: {str(e)}"
+    # Clean programmatic fallback to ensure API reliability under 512MB environments
+    return "Local validation model skipped on cloud deployment architecture."
 
 def save_to_database(user_id: str, image_paths: str, user_claim: str, claim_object: str, analysis: dict):
     db = SessionLocal()
@@ -169,7 +152,7 @@ async def analyze_claim_with_gemini(user_claim, claim_object, image_data_list, u
     evidence_requirements = load_evidence_requirements(claim_object)
     gatekeeper_assessment = run_local_text_validation(user_claim)
     prompt = build_analysis_prompt(user_claim, claim_object, user_history, evidence_requirements, gatekeeper_assessment)
-    model = genai.GenerativeModel("gemini-3.1-flash-lite")
+    
     content = []
     for b64, media_type, img_id in image_data_list:
         img_bytes = base64.b64decode(b64)
@@ -177,17 +160,26 @@ async def analyze_claim_with_gemini(user_claim, claim_object, image_data_list, u
         content.append(pil_img)
         content.append(f"[Image ID: {img_id}]")
     content.append(prompt)
-    response = await asyncio.to_thread(model.generate_content, content)
+    
+    # Executing using the modern `client.models.generate_content` call targeting gemini-2.5-flash
+    response = await asyncio.to_thread(
+        ai_client.models.generate_content,
+        model="gemini-2.5-flash",
+        contents=content
+    )
+    
     raw = response.text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"): raw = raw[4:]
         raw = raw.strip()
     result = json.loads(raw)
+    
     user_history_data = load_user_history(user_id)
     rejected = int(user_history_data.get("rejected_claim", 0))
     recent = int(user_history_data.get("last_90_days_claim_count", 0))
     current_flags = result.get("risk_flags", "none")
+    
     if "high risk pattern" in gatekeeper_assessment.lower() and "user_history_risk" not in current_flags:
         result["risk_flags"] = "user_history_risk" if current_flags == "none" else current_flags + ";user_history_risk"
     elif (rejected > 2 or recent > 3) and "user_history_risk" not in current_flags:
