@@ -12,6 +12,7 @@ import pandas as pd
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text, DateTime
@@ -36,12 +37,12 @@ app.add_middleware(
 )
 
 # Initialize the Modern Google GenAI Client
-# (It automatically sources GEMINI_API_KEY from your Render Environment variables)
 ai_client = genai.Client()
 
 BASE_DIR = BACKEND_DIR.parent
 DATASET_DIR = BASE_DIR / "dataset"
 OUTPUT_FILE = BASE_DIR / "output.csv"
+FRONTEND_DIR = BASE_DIR / "frontend"
 
 # Lightweight fallback structure for the cloud tier since torch/transformers are omitted
 gate_tokenizer, gate_model = None, None
@@ -72,8 +73,12 @@ class VerifiedClaim(Base):
 
 Base.metadata.create_all(bind=engine)
 
+# --- Frontend Static Files Configuration ---
+# This mounts your style and script assets so your index.html can load them automatically
+if FRONTEND_DIR.exists():
+    app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
+
 def run_local_text_validation(text_claim: str) -> str:
-    # Clean programmatic fallback to ensure API reliability under 512MB environments
     return "Local validation model skipped on cloud deployment architecture."
 
 def save_to_database(user_id: str, image_paths: str, user_claim: str, claim_object: str, analysis: dict):
@@ -161,7 +166,6 @@ async def analyze_claim_with_gemini(user_claim, claim_object, image_data_list, u
         content.append(f"[Image ID: {img_id}]")
     content.append(prompt)
     
-    # Executing using the modern `client.models.generate_content` call targeting gemini-2.5-flash
     response = await asyncio.to_thread(
         ai_client.models.generate_content,
         model="gemini-2.5-flash",
@@ -186,8 +190,14 @@ async def analyze_claim_with_gemini(user_claim, claim_object, image_data_list, u
         result["risk_flags"] = "user_history_risk" if current_flags == "none" else current_flags + ";user_history_risk"
     return result
 
+# --- Updated Root Endpoint ---
+# Serves your layout natively when opening the primary Render URL
 @app.get("/")
-def root(): return {"status": "running"}
+def root():
+    index_path = FRONTEND_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    return {"status": "running", "message": "Frontend interface folder directory not detected."}
 
 @app.get("/health")
 def health(): return {"status": "ok"}
@@ -247,14 +257,15 @@ async def run_batch_processing():
         batch_progress["status"] = "complete"
     except Exception as e:
         batch_progress["status"] = "error"
+
 @app.get("/api/download-output")
 def download_output():
-    # If the batch output file doesn't exist yet, generate an empty template on the fly
     if not OUTPUT_FILE.exists():
         output_columns = ["user_id", "image_paths", "user_claim", "claim_object", "evidence_standard_met", "evidence_standard_met_reason", "risk_flags", "issue_type", "object_part", "claim_status", "claim_status_justification", "supporting_image_ids", "valid_image", "severity"]
         pd.DataFrame(columns=output_columns).to_csv(OUTPUT_FILE, index=False)
         
     return FileResponse(OUTPUT_FILE, media_type="text/csv", filename="output.csv")
+
 @app.get("/api/sample-claims")
 def get_sample_claims():
     return pd.read_csv(DATASET_DIR / "sample_claims.csv").to_dict(orient="records")

@@ -2,10 +2,8 @@ venv/
 backend/venv/
 results/
 backend/results/
-dataset/
 images/
 *.db
-*.csv
 *.pt
 *.safetensors
 *.dll
