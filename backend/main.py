@@ -47,8 +47,21 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 # Lightweight fallback structure for the cloud tier since torch/transformers are omitted
 gate_tokenizer, gate_model = None, None
 
-DATABASE_URL = f"sqlite:///{BACKEND_DIR}/claims.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# --- Dynamic Permanent Cloud Database Configuration ---
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    # Local fallback so the code still works on your own computer offline
+    DATABASE_URL = f"sqlite:///{BACKEND_DIR}/claims.db"
+elif DATABASE_URL.startswith("postgres://"):
+    # Fixes a common SQLAlchemy compatibility quirk with newer connection string mappings
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Initialize the engine dynamically based on active environment config
+engine = create_engine(
+    DATABASE_URL, 
+    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -74,7 +87,6 @@ class VerifiedClaim(Base):
 Base.metadata.create_all(bind=engine)
 
 # --- Frontend Static Files Configuration ---
-# This mounts your style and script assets so your index.html can load them automatically
 if FRONTEND_DIR.exists():
     app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
 
@@ -190,8 +202,6 @@ async def analyze_claim_with_gemini(user_claim, claim_object, image_data_list, u
         result["risk_flags"] = "user_history_risk" if current_flags == "none" else current_flags + ";user_history_risk"
     return result
 
-# --- Updated Root Endpoint ---
-# Serves your layout natively when opening the primary Render URL
 @app.get("/")
 def root():
     index_path = FRONTEND_DIR / "index.html"
