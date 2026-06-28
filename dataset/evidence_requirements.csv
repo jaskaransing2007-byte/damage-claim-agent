@@ -1,0 +1,15 @@
+requirement_id,claim_object,applies_to,minimum_image_evidence
+REQ001,car,dent,At least one close-up image of the dented area showing depth and extent of deformation
+REQ002,car,scratch,At least one image showing the full length of scratch with surrounding paint context
+REQ003,car,crack,At least one image showing the crack origin and extent on the damaged part
+REQ004,car,glass_shatter,At least one image of the full glass surface showing shatter pattern
+REQ005,car,broken_part,At least one image of the broken component from two angles
+REQ006,laptop,crack,At least one image of the cracked surface with crack pattern visible
+REQ007,laptop,missing_part,At least one clear overhead image showing the affected area
+REQ008,laptop,water_damage,At least one image showing discoloration staining or corrosion on affected component
+REQ009,laptop,broken_part,At least one image showing the broken component from a clear angle
+REQ010,package,torn_packaging,At least one image of the outer packaging showing tear location and extent
+REQ011,package,crushed_packaging,At least one image of all damaged sides of the package
+REQ012,package,missing_part,Image of opened package showing contents or lack thereof
+REQ013,all,stain,At least one close-up image of the stained area with surrounding context visible
+REQ014,all,water_damage,At least one image showing visible water marks discoloration or corrosion

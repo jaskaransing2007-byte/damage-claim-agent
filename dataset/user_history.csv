@@ -1,0 +1,11 @@
+user_id,past_claim_count,accept_claim,manual_review_claim,rejected_claim,last_90_days_claim_count,history_flags,history_summary
+U001,3,3,0,0,1,none,Low risk user with all claims accepted
+U002,1,1,0,0,1,none,First time claimant all accepted
+U003,8,4,2,2,3,user_history_risk,High frequency claimant with multiple rejections
+U004,2,2,0,0,0,none,Previous claims all accepted no recent activity
+U005,5,1,1,3,4,user_history_risk,Multiple rejections and manual reviews indicate elevated risk
+U101,2,2,0,0,1,none,Clean history with accepted claims
+U102,1,1,0,0,1,none,Single prior claim accepted
+U103,10,5,3,2,5,user_history_risk,Frequent claimant with mixed outcomes and recent spike
+U104,3,3,0,0,1,none,All claims historically accepted
+U105,4,2,1,1,2,manual_review_required,One prior rejection and manual review suggests caution
