@@ -247,11 +247,14 @@ async def run_batch_processing():
         batch_progress["status"] = "complete"
     except Exception as e:
         batch_progress["status"] = "error"
-
 @app.get("/api/download-output")
 def download_output():
+    # If the batch output file doesn't exist yet, generate an empty template on the fly
+    if not OUTPUT_FILE.exists():
+        output_columns = ["user_id", "image_paths", "user_claim", "claim_object", "evidence_standard_met", "evidence_standard_met_reason", "risk_flags", "issue_type", "object_part", "claim_status", "claim_status_justification", "supporting_image_ids", "valid_image", "severity"]
+        pd.DataFrame(columns=output_columns).to_csv(OUTPUT_FILE, index=False)
+        
     return FileResponse(OUTPUT_FILE, media_type="text/csv", filename="output.csv")
-
 @app.get("/api/sample-claims")
 def get_sample_claims():
     return pd.read_csv(DATASET_DIR / "sample_claims.csv").to_dict(orient="records")
