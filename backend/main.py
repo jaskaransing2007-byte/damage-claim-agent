@@ -26,7 +26,7 @@ BACKEND_DIR = Path(__file__).resolve().parent
 ENV_PATH = BACKEND_DIR / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
-app = FastAPI(title="Damage Claim AI Agent", version="1.0.0")
+app = FastAPI(title="Damage Claim AI Agent Engine", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,13 +51,10 @@ gate_tokenizer, gate_model = None, None
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    # Local fallback so the code still works on your own computer offline
     DATABASE_URL = f"sqlite:///{BACKEND_DIR}/claims.db"
 elif DATABASE_URL.startswith("postgres://"):
-    # Fixes a common SQLAlchemy compatibility quirk with newer connection string mappings
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Initialize the engine dynamically based on active environment config
 engine = create_engine(
     DATABASE_URL, 
     connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
@@ -82,6 +79,12 @@ class VerifiedClaim(Base):
     supporting_image_ids = Column(String(100))
     valid_image = Column(Boolean)
     severity = Column(String(20))
+    
+    # 🔥 New Anti-Fraud Ownership Columns
+    registered_identifier_input = Column(String(100), nullable=True)
+    extracted_ownership_token = Column(String(100), nullable=True)
+    ownership_verified = Column(Boolean, default=False)
+    
     verified_at = Column(DateTime, default=datetime.utcnow)
 
 Base.metadata.create_all(bind=engine)
@@ -93,7 +96,7 @@ if FRONTEND_DIR.exists():
 def run_local_text_validation(text_claim: str) -> str:
     return "Local validation model skipped on cloud deployment architecture."
 
-def save_to_database(user_id: str, image_paths: str, user_claim: str, claim_object: str, analysis: dict):
+def save_to_database(user_id: str, image_paths: str, user_claim: str, claim_object: str, registered_id: str, analysis: dict):
     db = SessionLocal()
     try:
         db_record = VerifiedClaim(
@@ -104,7 +107,11 @@ def save_to_database(user_id: str, image_paths: str, user_claim: str, claim_obje
             object_part=analysis.get("object_part"), claim_status=analysis.get("claim_status"),
             claim_status_justification=analysis.get("claim_status_justification"),
             supporting_image_ids=analysis.get("supporting_image_ids"),
-            valid_image=analysis.get("valid_image"), severity=analysis.get("severity")
+            valid_image=analysis.get("valid_image"), severity=analysis.get("severity"),
+            # 🔥 Populating ownership parameters into persistent storage
+            registered_identifier_input=registered_id,
+            extracted_ownership_token=analysis.get("extracted_ownership_token"),
+            ownership_verified=analysis.get("ownership_verified", False)
         )
         db.add(db_record)
         db.commit()
@@ -141,16 +148,39 @@ def encode_image_to_base64(image_path: str) -> Optional[tuple]:
 def encode_uploaded_image(image_bytes: bytes, content_type: str) -> tuple:
     return base64.standard_b64encode(image_bytes).decode("utf-8"), content_type
 
-def build_analysis_prompt(user_claim: str, claim_object: str, user_history: dict, evidence_requirements: list, gatekeeper_assessment: str) -> str:
+def build_analysis_prompt(user_claim: str, claim_object: str, user_history: dict, evidence_requirements: list, gatekeeper_assessment: str, registered_id: str) -> str:
     req_text = "\n".join(f"- {r}" for r in evidence_requirements)
     history_str = json.dumps(user_history, indent=2)
-    return f"""You are an expert damage claim verification AI. Analyze the submitted images carefully and evaluate the damage claim below.
+    
+    # Dynamic prompt modification based on asset class target
+    token_instruction = ""
+    if claim_object == "car":
+        token_instruction = f"Locate the car's license plate in the images. Extract the plate number text and cross-check if it perfectly matches the user's expected plate: '{registered_id}'."
+    elif claim_object == "laptop":
+        token_instruction = f"Locate the laptop's serial number barcode sticker or text panel. Extract the alphanumeric serial value and check if it matches: '{registered_id}'."
+    elif claim_object == "package":
+        token_instruction = f"Locate the shipping label/slip pasted on or inside the box. Extract the Tracking Number/Barcode ID string and verify against: '{registered_id}'."
+
+    return f"""You are an expert damage claim verification and fraud detection AI. Analyze the submitted images carefully. 
+One of the images contains an asset ownership token proof (License plate, serial sticker, or delivery slip). 
+
+Your tasks:
+1. Extract the asset identifier text value from that token image.
+2. Cross-verify it directly against the User's Registered Identifier provided below.
+3. Assess the structural damage claimed by the user.
+
 - Object Type: {claim_object}
 - User Claim: {user_claim}
+- User's Registered Identifier Input: {registered_id}
 - Internal Text Model Verdict: {gatekeeper_assessment}
+
+Ownership Token Verification Directive:
+{token_instruction}
+
 {history_str}
 {req_text}
-Return JSON object:
+
+Return a valid raw JSON object matching this structure perfectly:
 {{
   "evidence_standard_met": true or false,
   "evidence_standard_met_reason": "string",
@@ -161,14 +191,16 @@ Return JSON object:
   "claim_status_justification": "string",
   "supporting_image_ids": "string",
   "valid_image": true or false,
-  "severity": "none/low/medium/high/unknown"
+  "severity": "none/low/medium/high/unknown",
+  "extracted_ownership_token": "string containing extracted plate/serial/tracking text",
+  "ownership_verified": true or false based on cross-check match
 }}"""
 
-async def analyze_claim_with_gemini(user_claim, claim_object, image_data_list, user_id):
+async def analyze_claim_with_gemini(user_claim, claim_object, image_data_list, user_id, registered_id):
     user_history = load_user_history(user_id)
     evidence_requirements = load_evidence_requirements(claim_object)
     gatekeeper_assessment = run_local_text_validation(user_claim)
-    prompt = build_analysis_prompt(user_claim, claim_object, user_history, evidence_requirements, gatekeeper_assessment)
+    prompt = build_analysis_prompt(user_claim, claim_object, user_history, evidence_requirements, gatekeeper_assessment, registered_id)
     
     content = []
     for b64, media_type, img_id in image_data_list:
@@ -191,11 +223,18 @@ async def analyze_claim_with_gemini(user_claim, claim_object, image_data_list, u
         raw = raw.strip()
     result = json.loads(raw)
     
+    # Internal Risk Flag Pipeline Calculations
     user_history_data = load_user_history(user_id)
     rejected = int(user_history_data.get("rejected_claim", 0))
     recent = int(user_history_data.get("last_90_days_claim_count", 0))
     current_flags = result.get("risk_flags", "none")
     
+    # Force a risk flag append if ownership verification fails to match
+    if not result.get("ownership_verified", False):
+        current_flags = "ownership_mismatch" if current_flags == "none" else current_flags + ";ownership_mismatch"
+        result["claim_status"] = "contradicted"
+        result["risk_flags"] = current_flags
+
     if "high risk pattern" in gatekeeper_assessment.lower() and "user_history_risk" not in current_flags:
         result["risk_flags"] = "user_history_risk" if current_flags == "none" else current_flags + ";user_history_risk"
     elif (rejected > 2 or recent > 3) and "user_history_risk" not in current_flags:
@@ -213,7 +252,13 @@ def root():
 def health(): return {"status": "ok"}
 
 @app.post("/api/analyze-claim")
-async def analyze_claim(user_id: str = Form(...), user_claim: str = Form(...), claim_object: str = Form(...), images: list[UploadFile] = File(...)):
+async def analyze_claim(
+    user_id: str = Form(...), 
+    user_claim: str = Form(...), 
+    claim_object: str = Form(...), 
+    registered_id: str = Form("unknown"), # 🔥 Captured from the frontend registration field
+    images: list[UploadFile] = File(...)
+):
     if claim_object not in ("car", "laptop", "package"): raise HTTPException(status_code=400)
     image_data_list, image_paths_list = [], []
     for i, img_file in enumerate(images):
@@ -223,9 +268,10 @@ async def analyze_claim(user_id: str = Form(...), user_claim: str = Form(...), c
         image_data_list.append((b64, media_type, img_id))
         image_paths_list.append(img_file.filename or img_id)
     image_paths_str = ";".join(image_paths_list)
-    analysis = await analyze_claim_with_gemini(user_claim, claim_object, image_data_list, user_id)
-    save_to_database(user_id, image_paths_str, user_claim, claim_object, analysis)
-    return {"user_id": user_id, "image_paths": image_paths_str, "user_claim": user_claim, "claim_object": claim_object, **analysis}
+    
+    analysis = await analyze_claim_with_gemini(user_claim, claim_object, image_data_list, user_id, registered_id)
+    save_to_database(user_id, image_paths_str, user_claim, claim_object, registered_id, analysis)
+    return {"user_id": user_id, "image_paths": image_paths_str, "user_claim": user_claim, "claim_object": claim_object, "registered_identifier_input": registered_id, **analysis}
 
 @app.post("/api/process-csv")
 async def process_csv_batch(background_tasks: BackgroundTasks):
@@ -243,9 +289,10 @@ async def run_batch_processing():
     try:
         claims_df = pd.read_csv(DATASET_DIR / "claims.csv")
         batch_progress["total"] = len(claims_df)
-        output_rows, output_columns = [], ["user_id", "image_paths", "user_claim", "claim_object", "evidence_standard_met", "evidence_standard_met_reason", "risk_flags", "issue_type", "object_part", "claim_status", "claim_status_justification", "supporting_image_ids", "valid_image", "severity"]
+        output_rows, output_columns = [], ["user_id", "image_paths", "user_claim", "claim_object", "evidence_standard_met", "evidence_standard_met_reason", "risk_flags", "issue_type", "object_part", "claim_status", "claim_status_justification", "supporting_image_ids", "valid_image", "severity", "extracted_ownership_token", "ownership_verified"]
         for _, row in claims_df.iterrows():
             user_id, image_paths_str, user_claim, claim_object = str(row["user_id"]), str(row["image_paths"]), str(row["user_claim"]), str(row["claim_object"])
+            reg_id = str(row.get("registered_id", "unknown"))
             image_data_list = []
             img_paths = [p.strip() for p in image_paths_str.split(";")]
             for i, img_path in enumerate(img_paths):
@@ -254,13 +301,13 @@ async def run_batch_processing():
                     b64, media_type = result
                     image_data_list.append((b64, media_type, Path(img_path).stem))
             if not image_data_list:
-                output_analysis = {"evidence_standard_met": False, "evidence_standard_met_reason": "No valid images found", "risk_flags": "damage_not_visible", "issue_type": "unknown", "object_part": "unknown", "claim_status": "not_enough_information", "claim_status_justification": "No images", "supporting_image_ids": "none", "valid_image": False, "severity": "unknown"}
+                output_analysis = {"evidence_standard_met": False, "evidence_standard_met_reason": "No valid images found", "risk_flags": "damage_not_visible", "issue_type": "unknown", "object_part": "unknown", "claim_status": "not_enough_information", "claim_status_justification": "No images", "supporting_image_ids": "none", "valid_image": False, "severity": "unknown", "extracted_ownership_token": "none", "ownership_verified": False}
                 output_rows.append({"user_id": user_id, "image_paths": image_paths_str, "user_claim": user_claim, "claim_object": claim_object, **output_analysis})
-                save_to_database(user_id, image_paths_str, user_claim, claim_object, output_analysis)
+                save_to_database(user_id, image_paths_str, user_claim, claim_object, reg_id, output_analysis)
             else:
-                analysis = await analyze_claim_with_gemini(user_claim, claim_object, image_data_list, user_id)
+                analysis = await analyze_claim_with_gemini(user_claim, claim_object, image_data_list, user_id, reg_id)
                 output_rows.append({"user_id": user_id, "image_paths": image_paths_str, "user_claim": user_claim, "claim_object": claim_object, **analysis})
-                save_to_database(user_id, image_paths_str, user_claim, claim_object, analysis)
+                save_to_database(user_id, image_paths_str, user_claim, claim_object, reg_id, analysis)
             batch_progress["processed"] += 1
             await asyncio.sleep(1)
         pd.DataFrame(output_rows, columns=output_columns).to_csv(OUTPUT_FILE, index=False)
@@ -271,7 +318,7 @@ async def run_batch_processing():
 @app.get("/api/download-output")
 def download_output():
     if not OUTPUT_FILE.exists():
-        output_columns = ["user_id", "image_paths", "user_claim", "claim_object", "evidence_standard_met", "evidence_standard_met_reason", "risk_flags", "issue_type", "object_part", "claim_status", "claim_status_justification", "supporting_image_ids", "valid_image", "severity"]
+        output_columns = ["user_id", "image_paths", "user_claim", "claim_object", "evidence_standard_met", "evidence_standard_met_reason", "risk_flags", "issue_type", "object_part", "claim_status", "claim_status_justification", "supporting_image_ids", "valid_image", "severity", "extracted_ownership_token", "ownership_verified"]
         pd.DataFrame(columns=output_columns).to_csv(OUTPUT_FILE, index=False)
         
     return FileResponse(OUTPUT_FILE, media_type="text/csv", filename="output.csv")

@@ -435,12 +435,17 @@
 
       <div class="form-group">
         <label>Object Type</label>
-        <select id="claimObject">
+        <select id="claimObject" onchange="updateIdentifierPlaceholder()">
           <option value="">— Select one —</option>
           <option value="car">🚗 Car</option>
           <option value="laptop">💻 Laptop</option>
           <option value="package">📦 Package</option>
         </select>
+      </div>
+
+      <div class="form-group">
+        <label id="registeredIdLabel">Asset Ownership Identifier</label>
+        <input type="text" id="registeredId" placeholder="Select an object type first…" required />
       </div>
 
       <div class="form-group">
@@ -494,7 +499,7 @@
       </div>
 
       <div class="result-panel" id="resultPanel">
-        </div>
+      </div>
     </div>
 
     <div class="card" style="margin-top:1.5rem">
@@ -519,10 +524,30 @@ let selectedFiles = [];
 let claimHistory = [];
 let batchPoller = null;
 
+// ── Dynamic Form UI Placeholder Sync ──────────────────────────
+function updateIdentifierPlaceholder() {
+  const objectType = document.getElementById("claimObject").value;
+  const inputField = document.getElementById("registeredId");
+  const labelField = document.getElementById("registeredIdLabel");
+
+  if (objectType === "car") {
+    labelField.textContent = "Vehicle License Plate";
+    inputField.placeholder = "e.g., DL3CAB1234";
+  } else if (objectType === "laptop") {
+    labelField.textContent = "Laptop Serial Number";
+    inputField.placeholder = "e.g., LSN987654321X";
+  } else if (objectType === "package") {
+    labelField.textContent = "Package Slip Tracking Number";
+    inputField.placeholder = "e.g., TRK441029384";
+  } else {
+    labelField.textContent = "Asset Ownership Identifier";
+    inputField.placeholder = "Select an object type first…";
+  }
+}
+
 // ── Theme Switcher Engine Layout ─────────────────────────────
 const themeToggleBtn = document.getElementById("themeToggleBtn");
 
-// Check user cache for previous theme settings matching preferences
 if (localStorage.getItem("theme") === "dark") {
   document.body.classList.add("dark-theme");
   themeToggleBtn.innerHTML = "☀️ Light Mode";
@@ -583,9 +608,11 @@ async function analyzeClaim() {
   const userId = document.getElementById("userId").value.trim();
   const claimObject = document.getElementById("claimObject").value;
   const userClaim = document.getElementById("userClaim").value.trim();
+  const registeredId = document.getElementById("registeredId").value.trim();
 
   if (!userId) return showToast("Please enter a User ID");
   if (!claimObject) return showToast("Please select an object type");
+  if (!registeredId) return showToast("Please enter the Asset Identifier");
   if (!userClaim) return showToast("Please describe the damage");
   if (selectedFiles.length === 0) return showToast("Please upload at least one image");
 
@@ -595,6 +622,7 @@ async function analyzeClaim() {
   formData.append("user_id", userId);
   formData.append("claim_object", claimObject);
   formData.append("user_claim", userClaim);
+  formData.append("registered_id", registeredId); // 🔥 SENDS TO FASTAPI FORM ENTRY PIPELINE
   selectedFiles.forEach(f => formData.append("images", f));
 
   try {
@@ -637,7 +665,7 @@ function renderResult(d) {
   const flags = d.risk_flags === "none" || !d.risk_flags ? [] : d.risk_flags.split(";");
   const flagsHtml = flags.length === 0
     ? `<span class="flag-chip ok">none</span>`
-    : flags.map(f => `<span class="flag-chip ${f.includes("risk") || f.includes("manipulation") ? "risk" : ""}">${f.replace(/_/g," ")}</span>`).join("");
+    : flags.map(f => `<span class="flag-chip ${f.includes("risk") || f.includes("mismatch") || f.includes("manipulation") ? "risk" : ""}">${f.replace(/_/g," ")}</span>`).join("");
 
   const sevClass = `sev-${d.severity || "unknown"}`;
 
@@ -647,6 +675,14 @@ function renderResult(d) {
       <p style="margin-top:.75rem;font-size:.9rem;color:var(--ink-soft);">${d.claim_status_justification || "No justification provided."}</p>
     </div>
     <div class="result-grid">
+      <div class="result-item">
+        <div class="ri-label">Ownership Status</div>
+        <div class="ri-val ${d.ownership_verified ? 'sev-low' : 'sev-high'}">${d.ownership_verified ? "🔒 Verified Owner" : "🚨 Fraud Mismatch"}</div>
+      </div>
+      <div class="result-item">
+        <div class="ri-label">Extracted Token</div>
+        <div class="ri-val" style="font-family:monospace; font-size:0.85rem;">${d.extracted_ownership_token || "none"}</div>
+      </div>
       <div class="result-item">
         <div class="ri-label">Issue Type</div>
         <div class="ri-val">${d.issue_type || "unknown"}</div>
