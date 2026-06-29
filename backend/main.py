@@ -80,7 +80,7 @@ class VerifiedClaim(Base):
     valid_image = Column(Boolean)
     severity = Column(String(20))
     
-    # 🔥 New Anti-Fraud Ownership Columns
+    # New Anti-Fraud Ownership Columns
     registered_identifier_input = Column(String(100), nullable=True)
     extracted_ownership_token = Column(String(100), nullable=True)
     ownership_verified = Column(Boolean, default=False)
@@ -108,7 +108,7 @@ def save_to_database(user_id: str, image_paths: str, user_claim: str, claim_obje
             claim_status_justification=analysis.get("claim_status_justification"),
             supporting_image_ids=analysis.get("supporting_image_ids"),
             valid_image=analysis.get("valid_image"), severity=analysis.get("severity"),
-            # 🔥 Populating ownership parameters into persistent storage
+            # Populating ownership parameters into persistent storage
             registered_identifier_input=registered_id,
             extracted_ownership_token=analysis.get("extracted_ownership_token"),
             ownership_verified=analysis.get("ownership_verified", False)
@@ -250,6 +250,7 @@ def root():
 
 @app.get("/health")
 def health(): return {"status": "ok"}
+
 def inspect_image_metadata(image_bytes: bytes) -> dict:
     """
     STRICT LOGIC: Audits files for missing hardware signatures.
@@ -266,7 +267,7 @@ def inspect_image_metadata(image_bytes: bytes) -> dict:
     try:
         img = Image.open(io.BytesIO(image_bytes))
         
-        # 🔥 Detect if the user is passing a JPEG format image container
+        # Detect if the user is passing a JPEG format image container
         is_jpeg = img.format in ["JPEG", "MPO"]
         exif_data = img._getexif()
         
@@ -278,7 +279,7 @@ def inspect_image_metadata(image_bytes: bytes) -> dict:
             if make or model:
                 has_hardware = True
         
-        # 🚨 STRICT RULE: If it's a JPEG but has zero hardware tags, it's flagged as synthetic!
+        # STRICT RULE: If it's a JPEG but has zero hardware tags, it's flagged as synthetic!
         if is_jpeg and not has_hardware:
             analysis["potential_synthetic_or_screenshot"] = True
             
@@ -286,6 +287,7 @@ def inspect_image_metadata(image_bytes: bytes) -> dict:
         pass
         
     return analysis
+
 @app.post("/api/analyze-claim")
 async def analyze_claim(
     user_id: str = Form(...), 
@@ -302,7 +304,7 @@ async def analyze_claim(
     for i, img_file in enumerate(images):
         image_bytes = await img_file.read()
         
-        # 🔥 RUN THE NEW DIGITAL FORENSICS METADATA CHECK HERE
+        # RUN THE NEW DIGITAL FORENSICS METADATA CHECK HERE
         meta_verdict = inspect_image_metadata(image_bytes)
         if meta_verdict["potential_synthetic_or_screenshot"]:
             metadata_fraud_detected = True
@@ -317,7 +319,7 @@ async def analyze_claim(
     # Analyze through Gemini engine
     analysis = await analyze_claim_with_gemini(user_claim, claim_object, image_data_list, user_id, registered_id)
     
-    # 🔥 INJECT THE RISK FLAG IF METADATA IS MISSING
+    # 🔥 HARD LOCK OVERRIDE: If metadata fraud is caught, strip the verified status completely!
     if metadata_fraud_detected:
         current_flags = analysis.get("risk_flags", "none")
         if current_flags == "none":
@@ -325,15 +327,18 @@ async def analyze_claim(
         elif "missing_hardware_metadata" not in current_flags:
             analysis["risk_flags"] = current_flags + ";missing_hardware_metadata"
             
-        # Optional: Force review or downgrade status for lacking native camera source
-        if analysis["claim_status"] == "supported":
-            analysis["claim_status_justification"] = (
-                "[ALERT: Image lacks native hardware metadata signature] " + 
-                analysis["claim_status_justification"]
-            )
+        # Overwrite Gemini's text decisions: A fake metadata file cannot be a verified owner!
+        analysis["ownership_verified"] = False
+        analysis["claim_status"] = "contradicted"
+        analysis["claim_status_justification"] = (
+            "[CRITICAL FRAUD ALERT] The claim has been rejected because the uploaded evidence "
+            "lacks authentic digital hardware metadata signatures. The image container indicates "
+            "it is a synthetic AI-generated asset or screenshot, nullifying verification."
+        )
     
     save_to_database(user_id, image_paths_str, user_claim, claim_object, registered_id, analysis)
     return {"user_id": user_id, "image_paths": image_paths_str, "user_claim": user_claim, "claim_object": claim_object, "registered_identifier_input": registered_id, **analysis}
+
 @app.post("/api/process-csv")
 async def process_csv_batch(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_batch_processing)
