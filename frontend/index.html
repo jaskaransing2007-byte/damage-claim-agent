@@ -456,9 +456,16 @@
       <div class="form-group">
         <label>Upload Evidence Images</label>
         <div class="upload-zone" id="uploadZone">
-          <input type="file" id="fileInput" accept="image/*" multiple />
+          <input type="file" id="fileInput" accept="image/*" multiple style="display:none;" />
+          <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;" />
+          
           <div class="upload-icon">🖼️</div>
-          <div class="upload-label"><strong>Click to upload</strong> or drag & drop<br><span>PNG, JPG, WEBP · Up to 10 images</span></div>
+          <div class="upload-label"><strong>Drag & drop files here</strong> or use the options below:<br><span>PNG, JPG, WEBP · Up to 10 images</span></div>
+          
+          <div style="display: flex; gap: 10px; justify-content: center; margin-top: 1.2rem; position: relative; z-index: 5;">
+            <button type="button" class="btn-secondary" style="font-size: 0.85rem; padding: 6px 14px;" onclick="document.getElementById('cameraInput').click()">📷 Take Live Photo</button>
+            <button type="button" class="btn-secondary" style="font-size: 0.85rem; padding: 6px 14px;" onclick="document.getElementById('fileInput').click()">📁 Browse Files</button>
+          </div>
         </div>
         <div class="preview-grid" id="previewGrid"></div>
       </div>
@@ -568,6 +575,7 @@ themeToggleBtn.addEventListener("click", () => {
 // ── File Upload ──────────────────────────────────────────────
 const uploadZone = document.getElementById("uploadZone");
 const fileInput  = document.getElementById("fileInput");
+const cameraInput = document.getElementById("cameraInput");
 const previewGrid = document.getElementById("previewGrid");
 
 uploadZone.addEventListener("dragover", e => { e.preventDefault(); uploadZone.classList.add("drag-over"); });
@@ -577,7 +585,15 @@ uploadZone.addEventListener("drop", e => {
   uploadZone.classList.remove("drag-over");
   addFiles(e.dataTransfer.files);
 });
+
 fileInput.addEventListener("change", () => addFiles(fileInput.files));
+
+// Target mobile camera submission pipeline updates
+cameraInput.addEventListener("change", () => {
+  addFiles(cameraInput.files);
+  // Clear file input value to allow taking consecutive snapshots smoothly
+  cameraInput.value = "";
+});
 
 function addFiles(files) {
   for (const f of files) {
@@ -622,7 +638,7 @@ async function analyzeClaim() {
   formData.append("user_id", userId);
   formData.append("claim_object", claimObject);
   formData.append("user_claim", userClaim);
-  formData.append("registered_id", registeredId); // 🔥 SENDS TO FASTAPI FORM ENTRY PIPELINE
+  formData.append("registered_id", registeredId); 
   selectedFiles.forEach(f => formData.append("images", f));
 
   try {
@@ -665,7 +681,7 @@ function renderResult(d) {
   const flags = d.risk_flags === "none" || !d.risk_flags ? [] : d.risk_flags.split(";");
   const flagsHtml = flags.length === 0
     ? `<span class="flag-chip ok">none</span>`
-    : flags.map(f => `<span class="flag-chip ${f.includes("risk") || f.includes("mismatch") || f.includes("manipulation") ? "risk" : ""}">${f.replace(/_/g," ")}</span>`).join("");
+    : flags.map(f => `<span class="flag-chip ${f.includes("risk") || f.includes("mismatch") || f.includes("manipulation") || f.includes("metadata") ? "risk" : ""}">${f.replace(/_/g," ")}</span>`).join("");
 
   const sevClass = `sev-${d.severity || "unknown"}`;
 
@@ -713,7 +729,7 @@ function renderResult(d) {
       </div>
       <div class="result-item">
         <div class="ri-label">Valid Images</div>
-        <div class="ri-val">${d.valid_image ? "✅ Yes" : "❌ No"}</div>
+        <div class="ri-val" style="color:${d.valid_image ? '#16a34a' : '#dc2626'}">${d.valid_image ? "✅ Yes" : "❌ No"}</div>
       </div>
     </div>
   `;
