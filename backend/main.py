@@ -319,7 +319,7 @@ async def analyze_claim(
     # Analyze through Gemini engine
     analysis = await analyze_claim_with_gemini(user_claim, claim_object, image_data_list, user_id, registered_id)
     
-    # 🔥 HARD LOCK OVERRIDE: If metadata fraud is caught, strip the verified status completely!
+    # 🔥 HARD LOCK OVERRIDE: If metadata fraud is caught, strip validation status entirely!
     if metadata_fraud_detected:
         current_flags = analysis.get("risk_flags", "none")
         if current_flags == "none":
@@ -327,9 +327,11 @@ async def analyze_claim(
         elif "missing_hardware_metadata" not in current_flags:
             analysis["risk_flags"] = current_flags + ";missing_hardware_metadata"
             
-        # Overwrite Gemini's text decisions: A fake metadata file cannot be a verified owner!
+        # Overwrite structural pipeline indicators completely
         analysis["ownership_verified"] = False
         analysis["claim_status"] = "contradicted"
+        analysis["valid_image"] = False  # 🚨 FORCE FLIP VALID_IMAGE DETECTOR TO FALSE
+        
         analysis["claim_status_justification"] = (
             "[CRITICAL FRAUD ALERT] The claim has been rejected because the uploaded evidence "
             "lacks authentic digital hardware metadata signatures. The image container indicates "
