@@ -250,29 +250,91 @@ def root():
 
 @app.get("/health")
 def health(): return {"status": "ok"}
-
+def inspect_image_metadata(image_bytes: bytes) -> dict:
+    """
+    Inspects image binary array for authentic camera hardware EXIF tags.
+    Returns analysis flags for fraud checking.
+    """
+    from PIL import Image
+    from PIL.ExifTags import TAGS
+    
+    analysis = {
+        "hardware_signature_found": False,
+        "camera_make": "Unknown",
+        "camera_model": "Unknown",
+        "potential_synthetic_or_screenshot": True
+    }
+    
+    try:
+        # Load the image array from raw stream bytes
+        img = Image.open(io.BytesIO(image_bytes))
+        exif_data = img._getexif()
+        
+        if exif_data:
+            readable_exif = {TAGS.get(key, key): val for key, val in exif_data.items()}
+            
+            # Extract standard manufacturer attributes
+            make = str(readable_exif.get("Make", "")).strip()
+            model = str(readable_exif.get("Model", "")).strip()
+            
+            if make or model:
+                analysis["hardware_signature_found"] = True
+                analysis["camera_make"] = make if make else "Generic"
+                analysis["camera_model"] = model if model else "Generic Sensor"
+                analysis["potential_synthetic_or_screenshot"] = False
+    except Exception:
+        # Fallback if image type doesn't support EXIF (like raw PNG drops)
+        pass
+        
+    return analysis
 @app.post("/api/analyze-claim")
 async def analyze_claim(
     user_id: str = Form(...), 
     user_claim: str = Form(...), 
     claim_object: str = Form(...), 
-    registered_id: str = Form("unknown"), # 🔥 Captured from the frontend registration field
+    registered_id: str = Form("unknown"),
     images: list[UploadFile] = File(...)
 ):
     if claim_object not in ("car", "laptop", "package"): raise HTTPException(status_code=400)
+    
     image_data_list, image_paths_list = [], []
+    metadata_fraud_detected = False
+    
     for i, img_file in enumerate(images):
         image_bytes = await img_file.read()
+        
+        # 🔥 RUN THE NEW DIGITAL FORENSICS METADATA CHECK HERE
+        meta_verdict = inspect_image_metadata(image_bytes)
+        if meta_verdict["potential_synthetic_or_screenshot"]:
+            metadata_fraud_detected = True
+            
         b64, media_type = encode_uploaded_image(image_bytes, img_file.content_type or "image/jpeg")
         img_id = f"img_{i+1}"
         image_data_list.append((b64, media_type, img_id))
         image_paths_list.append(img_file.filename or img_id)
+        
     image_paths_str = ";".join(image_paths_list)
     
+    # Analyze through Gemini engine
     analysis = await analyze_claim_with_gemini(user_claim, claim_object, image_data_list, user_id, registered_id)
+    
+    # 🔥 INJECT THE RISK FLAG IF METADATA IS MISSING
+    if metadata_fraud_detected:
+        current_flags = analysis.get("risk_flags", "none")
+        if current_flags == "none":
+            analysis["risk_flags"] = "missing_hardware_metadata"
+        elif "missing_hardware_metadata" not in current_flags:
+            analysis["risk_flags"] = current_flags + ";missing_hardware_metadata"
+            
+        # Optional: Force review or downgrade status for lacking native camera source
+        if analysis["claim_status"] == "supported":
+            analysis["claim_status_justification"] = (
+                "[ALERT: Image lacks native hardware metadata signature] " + 
+                analysis["claim_status_justification"]
+            )
+    
     save_to_database(user_id, image_paths_str, user_claim, claim_object, registered_id, analysis)
     return {"user_id": user_id, "image_paths": image_paths_str, "user_claim": user_claim, "claim_object": claim_object, "registered_identifier_input": registered_id, **analysis}
-
 @app.post("/api/process-csv")
 async def process_csv_batch(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_batch_processing)
