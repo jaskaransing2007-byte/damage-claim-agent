@@ -252,38 +252,37 @@ def root():
 def health(): return {"status": "ok"}
 def inspect_image_metadata(image_bytes: bytes) -> dict:
     """
-    Inspects image binary array for authentic camera hardware EXIF tags.
-    Returns analysis flags for fraud checking.
+    STRICT LOGIC: Audits files for missing hardware signatures.
+    Any JPEG file lacking an explicit camera Make/Model is flagged immediately.
     """
     from PIL import Image
     from PIL.ExifTags import TAGS
     
     analysis = {
         "hardware_signature_found": False,
-        "camera_make": "Unknown",
-        "camera_model": "Unknown",
-        "potential_synthetic_or_screenshot": True
+        "potential_synthetic_or_screenshot": False # Start as safe
     }
     
     try:
-        # Load the image array from raw stream bytes
         img = Image.open(io.BytesIO(image_bytes))
+        
+        # 🔥 Detect if the user is passing a JPEG format image container
+        is_jpeg = img.format in ["JPEG", "MPO"]
         exif_data = img._getexif()
         
+        has_hardware = False
         if exif_data:
             readable_exif = {TAGS.get(key, key): val for key, val in exif_data.items()}
-            
-            # Extract standard manufacturer attributes
             make = str(readable_exif.get("Make", "")).strip()
             model = str(readable_exif.get("Model", "")).strip()
-            
             if make or model:
-                analysis["hardware_signature_found"] = True
-                analysis["camera_make"] = make if make else "Generic"
-                analysis["camera_model"] = model if model else "Generic Sensor"
-                analysis["potential_synthetic_or_screenshot"] = False
+                has_hardware = True
+        
+        # 🚨 STRICT RULE: If it's a JPEG but has zero hardware tags, it's flagged as synthetic!
+        if is_jpeg and not has_hardware:
+            analysis["potential_synthetic_or_screenshot"] = True
+            
     except Exception:
-        # Fallback if image type doesn't support EXIF (like raw PNG drops)
         pass
         
     return analysis
